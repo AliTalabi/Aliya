@@ -25,354 +25,14 @@ jobs:
       - name: Install browser runtime
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pygame-ce pygbag
+          python -m pip install pygame-ce pygbag playwright
 
-      - name: Create browser-native entrypoint
+      - name: Generate browser entrypoint
         run: |
-          python - <<'PY'
-          from pathlib import Path
-          import re
-
-          src = Path("Aliya.py").read_text(encoding="utf-8")
-
-          # Keep the original game logic. Only replace desktop/Pygame-Zero
-          # infrastructure with a small browser-native pygame adapter.
-          replacements = [
-              ("import pgzrun\n", ""),
-              ("import webbrowser\n", ""),
-              ("import pyperclip\n", ""),
-              ("import tkinter as tk\n", ""),
-              ("from tkinter import messagebox\n", ""),
-              ("from ctypes import windll\n", ""),
-              ("from pgzero import clock, music\n", "from web_pgzero import clock, music\n"),
-              ("from pgzero.keyboard import keyboard\n", "from web_pgzero import keyboard\n"),
-              ("from pgzero.actor import Actor\n", "from web_pgzero import Actor\n"),
-              ("from pgzero.loaders import sounds\n", "from web_pgzero import sounds\n"),
-          ]
-          for old, new in replacements:
-              src = src.replace(old, new, 1)
-
-          src = re.sub(
-              r"(?m)^hwnd = pygame\\.display\\.get_wm_info\\(\\)\['window'\]\n"
-              r"^windll\\.user32\\.MoveWindow\\(hwnd, 175, 100, WIDTH, HEIGHT, False\)\n?",
-              "",
-              src,
-              count=1,
-          )
-
-          # The Tkinter cheat dialog cannot exist in a browser. Keep the same
-          # game-state transition without opening a desktop window.
-          src = re.sub(
-              r"(?ms)^def hack_game\(\):\n.*?(?=^def shop_come\(\):)",
-              "def hack_game():\n    global game_status\n    game_status = \\"starting_menu\\"\n\n\n",
-              src,
-              count=1,
-          )
-
-          src = re.sub(r"webbrowser\.open\([^\n]+\)", "pass", src)
-          src = re.sub(r"pyperclip\.copy\([^\n]+\)", "pass", src)
-          src = src.replace("pgzrun.go()\n", "")
-
-          adapter = r'''
-          import os
-          import time
-          import pygame
-
-          pygame.init()
-          try:
-              pygame.mixer.init()
-          except Exception:
-              pass
-
-          _screen_surface = pygame.display.set_mode((WIDTH, HEIGHT))
-          pygame.display.set_caption(TITLE)
-          _image_cache = {}
-          _sound_cache = {}
-          _events = []
-          _running = True
-
-          def _find_asset(folder, name, extensions=()):
-              name = str(name)
-              candidates = [
-                  os.path.join(folder, name),
-                  *[os.path.join(folder, name + ext) for ext in extensions],
-              ]
-              for path in candidates:
-                  if os.path.isfile(path):
-                      return path
-              # Pygame Zero assets are often referred to without extensions.
-              if os.path.isdir(folder):
-                  wanted = name.lower()
-                  for entry in os.listdir(folder):
-                      stem, ext = os.path.splitext(entry)
-                      if entry.lower() == wanted or stem.lower() == wanted:
-                          return os.path.join(folder, entry)
-              raise FileNotFoundError(f"Missing asset: {folder}/{name}")
-
-          def _load_image(name):
-              key = str(name)
-              if key not in _image_cache:
-                  image = pygame.image.load(
-                      _find_asset("images", key, (".png", ".jpg", ".jpeg", ".webp"))
-                  )
-                  _image_cache[key] = image.convert_alpha()
-              return _image_cache[key]
-
-          class _Draw:
-              def text(self, text, **kwargs):
-                  font = pygame.font.Font(None, int(kwargs.get("fontsize", 30)))
-                  color = pygame.Color(kwargs.get("color", "white"))
-                  surface = font.render(str(text), True, color)
-                  if "center" in kwargs:
-                      rect = surface.get_rect(center=tuple(map(int, kwargs["center"])))
-                  else:
-                      rect = surface.get_rect(topleft=tuple(map(int, kwargs.get("topleft", (0, 0)))))
-                  _screen_surface.blit(surface, rect)
-
-          class _Screen:
-              def __init__(self):
-                  self.draw = _Draw()
-
-              def blit(self, image, pos):
-                  _screen_surface.blit(_load_image(image), tuple(map(int, pos)))
-
-              def fill(self, color):
-                  _screen_surface.fill(color)
-
-          screen = _Screen()
-
-          # The original program accesses mod.screen because Pygame Zero
-          # normally injects screen into __main__.
-          import sys
-          sys.modules["__main__"].screen = screen
-
-          class Actor:
-              def __init__(self, image):
-                  self._image_name = str(image)
-                  self._surface = _load_image(self._image_name)
-                  self._x = 0.0
-                  self._y = 0.0
-                  self.angle = 0
-
-              @property
-              def image(self):
-                  return self._image_name
-
-              @image.setter
-              def image(self, value):
-                  self._image_name = str(value)
-                  self._surface = _load_image(self._image_name)
-
-              @property
-              def x(self):
-                  return self._x
-
-              @x.setter
-              def x(self, value):
-                  self._x = float(value)
-
-              @property
-              def y(self):
-                  return self._y
-
-              @y.setter
-              def y(self, value):
-                  self._y = float(value)
-
-              @property
-              def pos(self):
-                  return self._x, self._y
-
-              @pos.setter
-              def pos(self, value):
-                  self._x = float(value[0])
-                  self._y = float(value[1])
-
-              @property
-              def width(self):
-                  return self._surface.get_width()
-
-              @property
-              def height(self):
-                  return self._surface.get_height()
-
-              @property
-              def rect(self):
-                  return self._surface.get_rect(center=(round(self._x), round(self._y)))
-
-              def draw(self):
-                  surface = self._surface
-                  if self.angle:
-                      surface = pygame.transform.rotate(surface, self.angle)
-                  _screen_surface.blit(surface, surface.get_rect(center=(round(self._x), round(self._y))))
-
-              def collidepoint(self, pos):
-                  return self.rect.collidepoint(pos)
-
-              def colliderect(self, other):
-                  return self.rect.colliderect(other.rect)
-
-              def collidelist(self, actors):
-                  return self.rect.collidelist([a.rect for a in actors])
-
-          class _Clock:
-              def schedule(self, fn, delay):
-                  _events.append([time.monotonic() + float(delay), 0.0, fn])
-
-              def schedule_unique(self, fn, delay):
-                  _events[:] = [e for e in _events if e[2] is not fn]
-                  self.schedule(fn, delay)
-
-              def schedule_interval(self, fn, interval):
-                  interval = float(interval)
-                  _events.append([time.monotonic() + interval, interval, fn])
-
-              def tick(self):
-                  now = time.monotonic()
-                  due = []
-                  keep = []
-                  for event in _events:
-                      if now >= event[0]:
-                          due.append(event)
-                      else:
-                          keep.append(event)
-                  _events[:] = keep
-                  for _, interval, fn in due:
-                      fn()
-                      if interval > 0 and _running:
-                          _events.append([now + interval, interval, fn])
-
-          clock = _Clock()
-
-          class _Keyboard:
-              def __getattr__(self, key):
-                  mapping = {
-                      "left": pygame.K_LEFT,
-                      "right": pygame.K_RIGHT,
-                      "up": pygame.K_UP,
-                      "down": pygame.K_DOWN,
-                  }
-                  if key not in mapping:
-                      return False
-                  return bool(pygame.key.get_pressed()[mapping[key]])
-
-          keyboard = _Keyboard()
-
-          class _Sound:
-              def __init__(self, name):
-                  self.name = name
-
-              def play(self):
-                  try:
-                      path = _find_asset("sounds", self.name, (".ogg", ".wav"))
-                      if self.name not in _sound_cache:
-                          _sound_cache[self.name] = pygame.mixer.Sound(path)
-                      _sound_cache[self.name].play()
-                  except Exception:
-                      pass
-
-          class _Sounds:
-              def __getattr__(self, name):
-                  return _Sound(name)
-
-          sounds = _Sounds()
-
-          class _Music:
-              def __init__(self):
-                  self.current = None
-
-              def play(self, name):
-                  try:
-                      path = _find_asset("music", name, (".ogg", ".wav", ".mp3"))
-                      pygame.mixer.music.load(path)
-                      pygame.mixer.music.play(-1)
-                      self.current = path
-                  except Exception:
-                      pass
-
-              def stop(self):
-                  try:
-                      pygame.mixer.music.stop()
-                  except Exception:
-                      pass
-
-              def pause(self):
-                  try:
-                      pygame.mixer.music.pause()
-                  except Exception:
-                      pass
-
-              def unpause(self):
-                  try:
-                      pygame.mixer.music.unpause()
-                  except Exception:
-                      pass
-
-          music = _Music()
-
-          def quit():
-              global _running
-              _running = False
-
-          async def _main():
-              global _running
-              clock_fps = pygame.time.Clock()
-              while _running:
-                  for event in pygame.event.get():
-                      if event.type == pygame.QUIT:
-                          _running = False
-                      elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                          callback = globals().get("on_mouse_down")
-                          if callback:
-                              callback(event.pos)
-                      elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-                          callback = globals().get("on_mouse_up")
-                          if callback:
-                              callback(event.pos)
-
-                  clock.tick()
-                  update()
-                  _screen_surface.fill((0, 0, 0))
-                  draw()
-                  pygame.display.flip()
-                  clock_fps.tick(60)
-                  await asyncio.sleep(0)
-
-          '''
-
-          # Put the adapter before game objects are constructed.
-          marker = 'TITLE = "Aliya"\n'
-          if marker not in src:
-              raise SystemExit("TITLE marker not found")
-          src = src.replace(marker, marker + adapter + "\n", 1)
-
-          # The adapter's async loop must run after all original functions
-          # and callbacks have been defined.
-          src += "\nimport asyncio\nasyncio.run(_main())\n"
-
-          Path("main.py").write_text(src, encoding="utf-8")
-          Path("web_pgzero.py").write_text(
-              "# Browser adapter is embedded in main.py; this file only exists "
-              "to satisfy generated imports.\n", encoding="utf-8"
-          )
-          # Remove the temporary import dependency by replacing the adapter
-          # imports with local definitions after generation.
-          generated = Path("main.py").read_text(encoding="utf-8")
-          generated = generated.replace(
-              "from web_pgzero import clock, music\n"
-              "from web_pgzero import keyboard\n"
-              "from web_pgzero import Actor\n"
-              "from web_pgzero import sounds\n",
-              "",
-              1,
-          )
-          Path("main.py").write_text(generated, encoding="utf-8")
-          Path("Aliya_web.py").write_text(generated, encoding="utf-8")
-          PY
-
+          python build_web.py
           python -m py_compile main.py
 
-      - name: Build with pygbag
+      - name: Build web package
         run: |
           rm -rf build
           python -m pygbag --build --ume_block 0 main.py
@@ -383,7 +43,6 @@ jobs:
 
       - name: Browser smoke test
         run: |
-          python -m pip install playwright
           python -m playwright install --with-deps chromium
           python -m http.server 8000 --directory build/web >/tmp/aliya-http.log 2>&1 &
           SERVER_PID=$!
@@ -393,22 +52,21 @@ jobs:
           from playwright.async_api import async_playwright
 
           async def main():
-              page_errors = []
+              errors = []
               console = []
               async with async_playwright() as p:
                   browser = await p.chromium.launch()
                   page = await browser.new_page(viewport={"width": 1200, "height": 800})
-                  page.on("pageerror", lambda e: page_errors.append(str(e)))
+                  page.on("pageerror", lambda e: errors.append(str(e)))
                   page.on("console", lambda m: console.append(f"{m.type}: {m.text}"))
                   await page.goto("http://127.0.0.1:8000/", wait_until="load", timeout=30000)
                   await page.wait_for_timeout(30000)
                   await page.screenshot(path="/tmp/aliya.png", full_page=True)
                   print("CANVAS_COUNT=", await page.locator("canvas").count())
-                  print("BODY_TEXT=", (await page.locator("body").inner_text())[:1000])
-                  print("PAGE_ERRORS=", page_errors[-30:])
-                  print("CONSOLE=", console[-80:])
-                  if page_errors:
-                      raise RuntimeError("\n".join(page_errors[-30:]))
+                  print("PAGE_ERRORS=", errors[-30:])
+                  print("CONSOLE=", console[-100:])
+                  if errors:
+                      raise RuntimeError("\n".join(errors[-30:]))
                   if await page.locator("canvas").count() == 0:
                       raise RuntimeError("No canvas created")
                   await browser.close()
@@ -416,6 +74,17 @@ jobs:
           asyncio.run(main())
           PY
           python /tmp/test_aliya.py
+
+      - name: Upload browser diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-diagnostics
+          path: |
+            /tmp/aliya.png
+            /tmp/aliya-http.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload Pages artifact
         if: success()
