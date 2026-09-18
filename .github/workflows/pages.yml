@@ -96,6 +96,40 @@ jobs:
           rm -rf build/web
           python -m pygbag --build Aliya_web.py
 
+      - name: Remove Pygbag user-interaction startup gate
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("build/web/index.html")
+          s = p.read_text(encoding="utf-8")
+
+          # Pygbag 0.9.x can deliberately pause here waiting for a browser
+          # user-media gesture. GitHub Pages is already serving the page,
+          # so remove that startup gate and let the game boot automatically.
+          s = s.replace('ume_block : 1', 'ume_block : 0')
+          s = s.replace('autorun : 0', 'autorun : 1')
+
+          # Make the game canvas explicitly interactive above the loader UI.
+          s = s.replace(
+              'canvas.emscripten {\\n            border:',
+              'canvas.emscripten {\\n            pointer-events: auto;\\n            touch-action: none;\\n            border:',
+              1,
+          )
+
+          # Keep the canvas focused so keyboard/game events reach SDL/Pygame.
+          s = s.replace(
+              '</body>\\n</html>',
+              '''<script>\\n(function () {\\n  function focusGameCanvas() {\\n    const c = document.getElementById("canvas");\\n    if (!c) return;\\n    c.style.pointerEvents = "auto";\\n    c.setAttribute("tabindex", "1");\\n    try { c.focus({preventScroll: true}); } catch (_) { try { c.focus(); } catch (_) {} }\\n  }\\n  window.addEventListener("pointerdown", focusGameCanvas, {once: false, passive: true});\\n  window.addEventListener("touchstart", focusGameCanvas, {once: false, passive: true});\\n  window.addEventListener("keydown", focusGameCanvas, {once: false, passive: true});\\n  window.addEventListener("load", focusGameCanvas);\\n  setTimeout(focusGameCanvas, 250);\\n  setTimeout(focusGameCanvas, 1500);\\n})();\\n</script>\\n</body>\\n</html>''',
+              1,
+          )
+
+          p.write_text(s, encoding="utf-8")
+          assert 'ume_block : 0' in s
+          assert 'autorun : 1' in s
+          assert 'pointer-events: auto;' in s
+          print("Pygbag startup gate removed; canvas interaction enabled.")
+          PY
+
       - name: Prepare GitHub Pages artifact
         run: |
           test -f build/web/index.html
