@@ -2,8 +2,7 @@ name: Build and deploy Aliya to GitHub Pages
 
 on:
   push:
-    branches:
-      - master
+    branches: [master]
   workflow_dispatch:
 
 permissions:
@@ -17,159 +16,64 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-
-      - name: Install build dependencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install pgzero pygbag
-
-      - name: Prepare web-compatible source
+      - name: Prepare browser entrypoint
         run: |
           python - <<'PY'
           from pathlib import Path
           import re
-
-          source = Path("Aliya.py").read_text(encoding="utf-8")
-
-          # Remove desktop-only imports completely.
+          s = Path("Aliya.py").read_text(encoding="utf-8")
           for line in (
               "import pyperclip\n",
               "import tkinter as tk\n",
               "from tkinter import messagebox\n",
               "from ctypes import windll\n",
+              "import webbrowser\n",
           ):
-              source = source.replace(line, "", 1)
-
-          # Remove the Windows-only window positioning block.
-          source = re.sub(
+              s = s.replace(line, "", 1)
+          s = re.sub(
               r"(?m)^hwnd = pygame\.display\.get_wm_info\(\)\['window'\]\n"
               r"^windll\.user32\.MoveWindow\(hwnd, 175, 100, WIDTH, HEIGHT, False\)\n?",
               "",
-              source,
+              s,
               count=1,
           )
-
-          # Replace the Tkinter-only hacking screen with a browser-safe no-op.
-          source = re.sub(
+          s = re.sub(
               r"(?ms)^def hack_game\(\):\n.*?(?=^def shop_come\(\):)",
               "def hack_game():\n    global game_status\n    game_status = \"starting_menu\"\n\n\n",
-              source,
+              s,
               count=1,
           )
-
-          # Clipboard is a desktop feature; keep the buttons functional
-          # without making the game depend on a clipboard package.
-          source = source.replace(
-              'pyperclip.copy("+989044089850")',
-              'pass',
-          )
-          source = source.replace(
-              'pyperclip.copy("ali.talabi.25@gmail.com")',
-              'pass',
-          )
-
-          # Opening external applications/tabs is not required for gameplay.
-          # Replace these calls with harmless no-ops in the web build.
-          source = re.sub(
-              r"webbrowser\.open\((url_telegram|url_instagram|url_rubika|url_eitaa)\)",
-              "pass",
-              source,
-          )
-          source = source.replace("import webbrowser\n", "")
-
-          Path("Aliya_web.py").write_text(source, encoding="utf-8")
+          s = s.replace('pyperclip.copy("+989044089850")', "pass")
+          s = s.replace('pyperclip.copy("ali.talabi.25@gmail.com")', "pass")
+          s = re.sub(r"webbrowser\.open\((url_telegram|url_instagram|url_rubika|url_eitaa)\)", "pass", s)
+          Path("Aliya_web.py").write_text(s, encoding="utf-8")
+          main = s.replace("import pgzrun\n", "", 1)
+          main = main.replace("\npgzrun.go()\n", "\n", 1)
+          if not main.startswith("#!pgzrun\n"):
+              main = "#!pgzrun\n" + main
+          Path("main.py").write_text(main, encoding="utf-8")
           PY
-
-          python -m py_compile Aliya_web.py
-
-          echo "=== web source checks ==="
-          ! grep -nE '(^|[[:space:]])(import tkinter|from tkinter|from ctypes import windll|windll\.user32\.MoveWindow|pyperclip\.copy|webbrowser\.open)' Aliya_web.py
-          grep -nE '^(def hack_game|def shop_come|pgzrun\.go)' Aliya_web.py
-
-      - name: Build Pygame Zero game for the web
+          python -m py_compile main.py
+      - name: Build web game
         run: |
-          rm -rf build/web
-          cp Aliya_web.py main.py
-          rm -rf build/web
-          python -m pygbag --build main.py
-          echo "=== Pygbag archive contents ==="
-          tar -tzf build/web/aliya.tar.gz | sed -n "1,120p"
-
-      - name: Remove Pygbag user-interaction startup gate
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          p = Path("build/web/index.html")
-          s = p.read_text(encoding="utf-8")
-
-          # Disable Pygbag's startup user-media gate and enable automatic boot.
-          s = s.replace("ume_block : 1", "ume_block : 0")
-          s = s.replace("autorun : 0", "autorun : 1")
-
-          # Make the SDL canvas receive mouse, touch, and pointer input.
-          if "pointer-events: auto;" not in s:
-              s = s.replace(
-                  "canvas.emscripten {",
-                  "canvas.emscripten {\n            pointer-events: auto;\n            touch-action: none;",
-                  1,
-              )
-
-          # Focus the canvas after the page loads and whenever the user interacts.
-          if "Aliya canvas focus bridge" not in s:
-              bridge = """
-          <!-- Aliya canvas focus bridge -->
-          <script>
-          (function () {
-            function focusGameCanvas() {
-              var c = document.getElementById("canvas");
-              if (!c) return;
-              c.style.pointerEvents = "auto";
-              c.setAttribute("tabindex", "1");
-              try { c.focus({preventScroll: true}); } catch (e) { try { c.focus(); } catch (_) {} }
-            }
-            window.addEventListener("load", focusGameCanvas);
-            window.addEventListener("pointerdown", focusGameCanvas, true);
-            window.addEventListener("touchstart", focusGameCanvas, true);
-            window.addEventListener("keydown", focusGameCanvas, true);
-            setTimeout(focusGameCanvas, 250);
-            setTimeout(focusGameCanvas, 1500);
-          })();
-          </script>
-          """
-              s = s.replace("</body>", bridge + "</body>", 1)
-
-          # Fail loudly if the expected Pygbag template/config was not produced.
-          assert "ume_block : 0" in s, "Pygbag ume_block setting was not found"
-          assert "autorun : 1" in s, "Pygbag autorun setting was not found"
-          assert "pointer-events: auto;" in s, "Canvas CSS patch was not applied"
-          assert "Aliya canvas focus bridge" in s, "Canvas focus bridge was not injected"
-
-          p.write_text(s, encoding="utf-8")
-          print("Pygbag startup gate disabled and canvas input bridge installed.")
-          PY
-
-      - name: Prepare GitHub Pages artifact
-        run: |
+          rm -rf build
+          python -m pygbag --build --ume_block 0 main.py
           test -f build/web/index.html
           test -f build/web/aliya.apk
           test -f build/web/aliya.tar.gz
           tar -tzf build/web/aliya.tar.gz | grep -q "assets/main.py"
-          touch build/web/.nojekyll
-
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
-
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
           path: build/web
-
   deploy:
     needs: build
     runs-on: ubuntu-latest
@@ -177,6 +81,6 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Deploy to GitHub Pages
+      - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
