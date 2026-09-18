@@ -158,6 +158,38 @@ jobs:
           PY
           python /tmp/test_aliya.py
 
+      - name: Collect browser diagnostics
+        if: always()
+        run: |
+          echo "=== HTTP SERVER LOG ==="
+          cat /tmp/aliya-http.log || true
+          echo "=== SCREENSHOT INFO ==="
+          python - <<'PY'
+          from pathlib import Path
+          try:
+              from PIL import Image
+              p = Path("/tmp/aliya.png")
+              if p.exists():
+                  im = Image.open(p).convert("RGB")
+                  print("SCREENSHOT_SIZE=", im.size)
+                  print("CENTER_PIXEL=", im.getpixel((im.width//2, im.height//2)))
+                  print("TOPLEFT_PIXEL=", im.getpixel((0, 0)))
+                  print("UNIQUE_SAMPLE_PIXELS=", len(set(im.resize((100,100)).getdata())))
+          except Exception as e:
+              print("SCREENSHOT_ANALYSIS_ERROR=", repr(e))
+          PY
+      - name: Upload browser diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-diagnostics
+          path: |
+            /tmp/aliya.png
+            /tmp/aliya_canvas.png
+            /tmp/aliya-http.log
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
