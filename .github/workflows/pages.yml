@@ -102,13 +102,16 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import shutil
+          import sysconfig
           import pgzero
-          import pgzrun
 
           src = Path(pgzero.__file__).parent
           dst = Path("pgzero")
           shutil.copytree(src, dst, dirs_exist_ok=True)
-          shutil.copy2(Path(pgzrun.__file__), "pgzrun.py")
+
+          # Copy pgzrun without importing it (its import eagerly loads tone -> numpy).
+          pgzrun_src = Path(sysconfig.get_paths()["purelib"]) / "pgzrun.py"
+          shutil.copy2(pgzrun_src, "pgzrun.py")
 
           # Aliya does not use Pygame Zero's tone API. Removing the eager tone
           # import avoids pulling pyfxr into the browser runtime.
