@@ -32,66 +32,15 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-
-          path = Path("Aliya.py")
-          source = path.read_text(encoding="utf-8")
-
-          source = source.replace(
-              "import pyperclip\n",
-              "try:\n"
-              "    import pyperclip\n"
-              "except ImportError:\n"
-              "    pyperclip = None\n"
-          )
-          source = source.replace(
-              "import tkinter as tk\n",
-              "try:\n"
-              "    import tkinter as tk\n"
-              "    from tkinter import messagebox\n"
-              "except ImportError:\n"
-              "    tk = None\n"
-              "    messagebox = None\n"
-          )
-          source = source.replace(
-              "from ctypes import windll\n",
-              "try:\n"
-              "    from ctypes import windll\n"
-              "except ImportError:\n"
-              "    windll = None\n"
-          )
-          source = source.replace(
-              "from tkinter import messagebox\n\nWIDTH = 1000",
-              "WIDTH = 1000"
-          )
-          source = source.replace(
-              "hwnd = pygame.display.get_wm_info()['window']\n"
-              "windll.user32.MoveWindow(hwnd, 175, 100, WIDTH, HEIGHT, False)",
-              "if windll is not None:\n"
-              "    hwnd = pygame.display.get_wm_info()['window']\n"
-              "    windll.user32.MoveWindow(hwnd, 175, 100, WIDTH, HEIGHT, False)"
-          )
-          source = source.replace(
-              "def hack_game():\n"
-              "    global game_status, money\n\n"
-              "    def on_enter():",
-              "def hack_game():\n"
-              "    global game_status, money\n\n"
-              "    if tk is None or messagebox is None:\n"
-              "        game_status = \"starting_menu\"\n"
-              "        return\n\n"
-              "    def on_enter():"
-          )
-          source = source.replace(
-              '        pyperclip.copy("+989044089850")',
-              '        if pyperclip is not None:\n'
-              '            pyperclip.copy("+989044089850")'
-          )
-          source = source.replace(
-              '        pyperclip.copy("ali.talabi.25@gmail.com")',
-              '        if pyperclip is not None:\n'
-              '            pyperclip.copy("ali.talabi.25@gmail.com")'
-          )
-
+          source = Path("Aliya.py").read_text(encoding="utf-8")
+          source = source.replace("import pyperclip\\n", "try:\\n    import pyperclip\\nexcept ImportError:\\n    pyperclip = None\\n")
+          source = source.replace("import tkinter as tk\\n", "try:\\n    import tkinter as tk\\n    from tkinter import messagebox\\nexcept ImportError:\\n    tk = None\\n    messagebox = None\\n")
+          source = source.replace("from ctypes import windll\\n", "try:\\n    from ctypes import windll\\nexcept ImportError:\\n    windll = None\\n")
+          source = source.replace("from tkinter import messagebox\\n\\nWIDTH = 1000", "WIDTH = 1000")
+          source = source.replace("hwnd = pygame.display.get_wm_info()['window']\\nwindll.user32.MoveWindow(hwnd, 175, 100, WIDTH, HEIGHT, False)", "if windll is not None:\\n    hwnd = pygame.display.get_wm_info()['window']\\n    windll.user32.MoveWindow(hwnd, 175, 100, WIDTH, HEIGHT, False)")
+          source = source.replace("def hack_game():\\n    global game_status, money\\n\\n    def on_enter():", "def hack_game():\\n    global game_status, money\\n\\n    if tk is None or messagebox is None:\\n        game_status = \"starting_menu\"\\n        return\\n\\n    def on_enter():")
+          source = source.replace('        pyperclip.copy("+989044089850")', '        if pyperclip is not None:\\n            pyperclip.copy("+989044089850")')
+          source = source.replace('        pyperclip.copy("ali.talabi.25@gmail.com")', '        if pyperclip is not None:\\n            pyperclip.copy("ali.talabi.25@gmail.com")')
           Path("Aliya_web.py").write_text(source, encoding="utf-8")
           PY
 
@@ -99,30 +48,6 @@ jobs:
         run: |
           rm -rf build/web
           python -m pygbag --build Aliya_web.py
-
-      - name: Patch Pygbag start-screen input
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path("build/web/index.html")
-          html = path.read_text(encoding="utf-8")
-
-          old = """        while not platform.window.MM.UME:
-                await asyncio.sleep(.1)
-"""
-          new = """        platform.window.canvas.style.pointerEvents = "none"
-            while not platform.window.MM.UME:
-                await asyncio.sleep(.1)
-            platform.window.canvas.style.pointerEvents = "auto"
-"""
-          if old not in html:
-              raise SystemExit("Could not find Pygbag media-engagement loop to patch.")
-
-          html = html.replace(old, new, 1)
-          path.write_text(html, encoding="utf-8")
-          print("Patched Pygbag start-screen input handling.")
-          PY
 
       - name: Prepare GitHub Pages artifact
         run: |
