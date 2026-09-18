@@ -23,11 +23,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # Pygbag supports pygame-ce, not the legacy pygame package.
-          # pgzero currently declares legacy pygame, so install it without deps.
           python -m pip install pygame-ce pygbag
-          python -m pip install --no-deps pgzero
-      - name: Prepare browser entrypoint
+
+      - name: Prepare pure pygame browser entrypoint
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -35,13 +33,19 @@ jobs:
 
           s = Path("Aliya.py").read_text(encoding="utf-8")
 
-          # Remove desktop-only imports/APIs.
+          # Remove Pygame Zero and desktop-only imports. The browser build uses
+          # a small local compatibility layer implemented below.
           for line in (
+              "import pgzrun\n",
               "import pyperclip\n",
               "import tkinter as tk\n",
               "from tkinter import messagebox\n",
               "from ctypes import windll\n",
               "import webbrowser\n",
+              "from pgzero import clock, music\n",
+              "from pgzero.keyboard import keyboard\n",
+              "from pgzero.actor import Actor\n",
+              "from pgzero.loaders import sounds\n",
           ):
               s = s.replace(line, "", 1)
 
@@ -53,6 +57,7 @@ jobs:
               count=1,
           )
 
+          # Disable the desktop-only Tkinter helper in the browser.
           s = re.sub(
               r"(?ms)^def hack_game\(\):\n.*?(?=^def shop_come\(\):)",
               "def hack_game():\n    global game_status\n    game_status = \"starting_menu\"\n\n\n",
@@ -62,21 +67,33 @@ jobs:
 
           s = s.replace('pyperclip.copy("+989044089850")', "pass")
           s = s.replace('pyperclip.copy("ali.talabi.25@gmail.com")', "pass")
-          s = re.sub(r"webbrowser\.open\((url_telegram|url_instagram|url_rubika|url_eitaa)\)", "pass", s)
+          s = re.sub(
+              r"webbrowser\.open\((url_telegram|url_instagram|url_rubika|url_eitaa)\)",
+              "pass",
+              s,
+          )
 
-          # Browser builds cannot persist files with normal open(..., "w").
-          # Remove exact write blocks without relying on fragile escaped regexes.
+          # Normal browser file writes are not appropriate here. Keep the
+          # bundled JSON files readable, but keep state in memory for this build.
           lines = s.splitlines(keepends=True)
           out = []
           i = 0
           removed_writes = 0
           while i < len(lines):
               line = lines[i]
-              m = re.match(r"^(\s*)with open\((.*?),\s*['\"]w['\"]\) as [A-Za-z_]\w*:\s*$", line.rstrip("\n"))
+              m = re.match(
+                  r"^(\s*)with open\((.*?),\s*['\"]w['\"]\) as [A-Za-z_]\w*:\s*$",
+                  line.rstrip("\n"),
+              )
               if m and i + 1 < len(lines):
                   next_line = lines[i + 1]
-                  if re.match(r"^" + re.escape(m.group(1)) + r"    (json\.dump|.*\.write\()", next_line):
-                      out.append(m.group(1) + "# Browser persistence disabled; state remains in memory.\n")
+                  if re.match(
+                      r"^" + re.escape(m.group(1)) + r"    (json\.dump|.*\.write\()",
+                      next_line,
+                  ):
+                      out.append(
+                          m.group(1) + "# Browser persistence disabled; state remains in memory.\n"
+                      )
                       i += 2
                       removed_writes += 1
                       continue
@@ -86,57 +103,298 @@ jobs:
           print("REMOVED_WRITE_BLOCKS=", removed_writes)
 
           s = s.replace("mod.screen.", "screen.")
+          s = s.replace("\npgzrun.go()\n", "\n")
+
+          # Insert a pure-pygame compatibility layer immediately after WIDTH,
+          # HEIGHT and TITLE are defined.
+          marker = 'TITLE = "Aliya"\n'
+          compat = r'''
+          import asyncio
+          import os
+          import time
+
+          pygame.init()
+          try:
+              pygame.mixer.init()
+          except Exception:
+              pass
+
+          _image_cache = {}
+          _sound_cache = {}
+          _running = True
+
+          def _asset_path(kind, name):
+              name = str(name)
+              base = os.path.join(kind, name)
+              for ext in ("", ".png", ".jpg", ".jpeg", ".webp"):
+                  candidate = base + ext
+                  if os.path.isfile(candidate):
+                      return candidate
+              raise FileNotFoundError(f"Asset not found: {kind}/{name}")
+
+          def _load_image(name):
+              key = str(name)
+              if key not in _image_cache:
+                  _image_cache[key] = pygame.image.load(
+                      _asset_path("images", key)
+                  ).convert_alpha()
+              return _image_cache[key]
+
+          class _DrawProxy:
+              def __init__(self, surface):
+                  self.surface = surface
+
+              def text(self, text, **kwargs):
+                  size = int(kwargs.get("fontsize", 30))
+                  color = kwargs.get("color", "white")
+                  font = pygame.font.Font(None, size)
+                  rendered = font.render(str(text), True, pygame.Color(color))
+                  center = kwargs.get("center")
+                  if center is not None:
+                      rect = rendered.get_rect(center=(int(center[0]), int(center[1])))
+                  else:
+                      rect = rendered.get_rect(topleft=kwargs.get("topleft", (0, 0)))
+                  self.surface.blit(rendered, rect)
+
+          class _ScreenProxy:
+              def __init__(self):
+                  self.surface = pygame.display.set_mode((WIDTH, HEIGHT))
+                  self.draw = _DrawProxy(self.surface)
+
+              def blit(self, image, pos):
+                  surface = _load_image(image) if isinstance(image, str) else image
+                  self.surface.blit(surface, pos)
+
+              def fill(self, color):
+                  self.surface.fill(color)
+
+          screen = _ScreenProxy()
+
+          class Actor:
+              def __init__(self, image):
+                  self._image_name = str(image)
+                  self._surface = _load_image(self._image_name)
+                  self._x = 0.0
+                  self._y = 0.0
+                  self.angle = 0
+
+              @property
+              def image(self):
+                  return self._image_name
+
+              @image.setter
+              def image(self, value):
+                  self._image_name = str(value)
+                  self._surface = _load_image(self._image_name)
+
+              @property
+              def x(self):
+                  return self._x
+
+              @x.setter
+              def x(self, value):
+                  self._x = float(value)
+
+              @property
+              def y(self):
+                  return self._y
+
+              @y.setter
+              def y(self, value):
+                  self._y = float(value)
+
+              @property
+              def pos(self):
+                  return self._x, self._y
+
+              @pos.setter
+              def pos(self, value):
+                  self._x, self._y = float(value[0]), float(value[1])
+
+              @property
+              def width(self):
+                  return self._surface.get_width()
+
+              @property
+              def height(self):
+                  return self._surface.get_height()
+
+              @property
+              def rect(self):
+                  return self._surface.get_rect(center=(round(self._x), round(self._y)))
+
+              def draw(self):
+                  surface = self._surface
+                  if self.angle:
+                      surface = pygame.transform.rotate(surface, self.angle)
+                  rect = surface.get_rect(center=(round(self._x), round(self._y)))
+                  screen.surface.blit(surface, rect)
+
+              def collidepoint(self, pos):
+                  return self.rect.collidepoint(pos)
+
+              def colliderect(self, other):
+                  return self.rect.colliderect(other.rect)
+
+              def collidelist(self, actors):
+                  return self.rect.collidelist([actor.rect for actor in actors])
+
+          class _Clock:
+              def __init__(self):
+                  self.events = []
+
+              def schedule(self, fn, delay):
+                  self.events.append([time.monotonic() + float(delay), 0.0, fn])
+
+              def schedule_unique(self, fn, delay):
+                  self.events = [e for e in self.events if e[2] is not fn]
+                  self.schedule(fn, delay)
+
+              def schedule_interval(self, fn, interval):
+                  self.events.append([time.monotonic() + float(interval), float(interval), fn])
+
+              def tick(self):
+                  now = time.monotonic()
+                  due = []
+                  remaining = []
+                  for event in self.events:
+                      if now >= event[0]:
+                          due.append(event)
+                      else:
+                          remaining.append(event)
+                  self.events = remaining
+                  for when, interval, fn in due:
+                      fn()
+                      if interval > 0 and _running:
+                          self.events.append([now + interval, interval, fn])
+
+          clock = _Clock()
+
+          class _Keyboard:
+              @property
+              def left(self):
+                  return bool(pygame.key.get_pressed()[pygame.K_LEFT])
+
+              @property
+              def right(self):
+                  return bool(pygame.key.get_pressed()[pygame.K_RIGHT])
+
+              @property
+              def up(self):
+                  return bool(pygame.key.get_pressed()[pygame.K_UP])
+
+              @property
+              def down(self):
+                  return bool(pygame.key.get_pressed()[pygame.K_DOWN])
+
+          keyboard = _Keyboard()
+
+          class _Sound:
+              def __init__(self, name):
+                  self.name = name
+
+              def play(self):
+                  try:
+                      if self.name not in _sound_cache:
+                          _sound_cache[self.name] = pygame.mixer.Sound(
+                              _asset_path("sounds", self.name)
+                          )
+                      _sound_cache[self.name].play()
+                  except Exception:
+                      pass
+
+          class _Sounds:
+              laser_shoot = _Sound("laser_shoot.ogg")
+
+          sounds = _Sounds()
+
+          class _Music:
+              def __init__(self):
+                  self.current = None
+
+              def play(self, name):
+                  try:
+                      filename = _asset_path("music", str(name) + ".ogg")
+                      pygame.mixer.music.load(filename)
+                      pygame.mixer.music.play(-1)
+                      self.current = filename
+                  except Exception:
+                      pass
+
+              def stop(self):
+                  try:
+                      pygame.mixer.music.stop()
+                  except Exception:
+                      pass
+
+              def pause(self):
+                  try:
+                      pygame.mixer.music.pause()
+                  except Exception:
+                      pass
+
+              def unpause(self):
+                  try:
+                      pygame.mixer.music.unpause()
+                  except Exception:
+                      pass
+
+          music = _Music()
+
+          def quit():
+              global _running
+              _running = False
+
+          def _handle_events():
+              global _running
+              for event in pygame.event.get():
+                  if event.type == pygame.QUIT:
+                      _running = False
+                  elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                      callback = globals().get("on_mouse_down")
+                      if callback:
+                          callback(event.pos)
+                  elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                      callback = globals().get("on_mouse_up")
+                      if callback:
+                          callback(event.pos)
+          '''
+          compat = "\n".join(
+              line[10:] if line.startswith("          ") else line
+              for line in compat.strip("\n").splitlines()
+          ) + "\n"
+
+          if marker not in s:
+              raise SystemExit("Could not find TITLE marker")
+          s = s.replace(marker, marker + compat, 1)
+
+          # Replace the Pygame Zero entrypoint with a real async pygame loop.
+          s += r'''
+          
+          async def _game_main():
+              global _running
+              while _running:
+                  _handle_events()
+                  clock.tick()
+                  update()
+                  draw()
+                  pygame.display.flip()
+                  await asyncio.sleep(0)
+          
+          asyncio.run(_game_main())
+          '''
 
           Path("Aliya_web.py").write_text(s, encoding="utf-8")
-
-          main = s.replace("import pgzrun\n", "", 1)
-          main = main.replace("\npgzrun.go()\n", "\n", 1)
-          if not main.startswith("#!pgzrun\n"):
-              main = "#!pgzrun\n" + main
-          Path("main.py").write_text(main, encoding="utf-8")
+          Path("main.py").write_text(s, encoding="utf-8")
           PY
           python -m py_compile main.py
-
-          # Vendor Pygame Zero into the game bundle so Pygbag does not try to
-          # install its desktop-only dependency chain (notably numpy/pyfxr).
-          python - <<'PY'
-          from pathlib import Path
-          import shutil
-          import sysconfig
-          import pgzero
-
-          src = Path(pgzero.__file__).parent
-          dst = Path("pgzero")
-          shutil.copytree(src, dst, dirs_exist_ok=True)
-
-          # Copy pgzrun without importing it (its import eagerly loads tone -> numpy).
-          pgzrun_src = Path(sysconfig.get_paths()["purelib"]) / "pgzrun.py"
-          shutil.copy2(pgzrun_src, "pgzrun.py")
-
-          # Aliya does not use Pygame Zero's tone API. Removing the eager tone
-          # import avoids pulling pyfxr into the browser runtime.
-          builtins = dst / "builtins.py"
-          s = builtins.read_text(encoding="utf-8")
-          s = s.replace("from . import tone\n", "")
-          s = s.replace("tone, ", "")
-          s = s.replace(", tone", "")
-          builtins.write_text(s, encoding="utf-8")
-          print("VENDORED_PGZERO=", src)
-          PY
-          python - <<'PY'
-          import pygame, pgzero
-          print("PYGAME_VERSION=", pygame.version.ver)
-          print("PGZERO_VERSION=", getattr(pgzero, "__version__", "unknown"))
-          print("PYGAME_FILE=", pygame.__file__)
-          PY
-
       - name: Validate browser source
         run: |
           if grep -nE 'open\([^\n]*["'\''"]w["'\''"]\)' main.py; then
             echo "ERROR: browser-incompatible file write remains"
             exit 1
           fi
-          grep -n "^#!pgzrun" main.py
+          grep -n "async def _game_main" main.py
 
       - name: Build web game
         run: |
