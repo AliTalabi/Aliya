@@ -1,0 +1,123 @@
+name: Build and deploy Aliya to GitHub Pages
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pgzero pyperclip pygbag
+
+      - name: Prepare web-compatible source
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("Aliya.py")
+          source = path.read_text(encoding="utf-8")
+
+          source = source.replace(
+              "import pyperclip\n",
+              "try:\n"
+              "    import pyperclip\n"
+              "except ImportError:\n"
+              "    pyperclip = None\n"
+          )
+          source = source.replace(
+              "import tkinter as tk\n",
+              "try:\n"
+              "    import tkinter as tk\n"
+              "    from tkinter import messagebox\n"
+              "except ImportError:\n"
+              "    tk = None\n"
+              "    messagebox = None\n"
+          )
+          source = source.replace(
+              "from ctypes import windll\n",
+              "try:\n"
+              "    from ctypes import windll\n"
+              "except ImportError:\n"
+              "    windll = None\n"
+          )
+          source = source.replace(
+              "from tkinter import messagebox\n\nWIDTH = 1000",
+              "WIDTH = 1000"
+          )
+          source = source.replace(
+              "hwnd = pygame.display.get_wm_info()['window']\n"
+              "windll.user32.MoveWindow(hwnd, 175, 100, WIDTH, HEIGHT, False)",
+              "if windll is not None:\n"
+              "    hwnd = pygame.display.get_wm_info()['window']\n"
+              "    windll.user32.MoveWindow(hwnd, 175, 100, WIDTH, HEIGHT, False)"
+          )
+          source = source.replace(
+              "def hack_game():\n"
+              "    global game_status, money\n\n"
+              "    def on_enter():",
+              "def hack_game():\n"
+              "    global game_status, money\n\n"
+              "    if tk is None or messagebox is None:\n"
+              "        game_status = \"starting_menu\"\n"
+              "        return\n\n"
+              "    def on_enter():"
+          )
+          source = source.replace(
+              '        pyperclip.copy("+989044089850")',
+              '        if pyperclip is not None:\n'
+              '            pyperclip.copy("+989044089850")'
+          )
+          source = source.replace(
+              '        pyperclip.copy("ali.talabi.25@gmail.com")',
+              '        if pyperclip is not None:\n'
+              '            pyperclip.copy("ali.talabi.25@gmail.com")'
+          )
+
+          Path("Aliya_web.py").write_text(source, encoding="utf-8")
+          PY
+
+      - name: Build Pygame Zero game for the web
+        run: |
+          rm -rf build/web
+          python -m pygbag --build Aliya_web.py
+
+      - name: Prepare GitHub Pages artifact
+        run: |
+          test -f build/web/index.html
+          test -f build/web/Aliya_web.apk
+          touch build/web/.nojekyll
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: build/web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
