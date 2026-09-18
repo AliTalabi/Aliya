@@ -94,7 +94,8 @@ jobs:
       - name: Build Pygame Zero game for the web
         run: |
           rm -rf build/web
-          python -m pygbag --build Aliya_web.py
+          cp Aliya_web.py main.py
+          python -m pygbag --build main.py
 
       - name: Remove Pygbag user-interaction startup gate
         run: |
@@ -155,6 +156,7 @@ jobs:
           test -f build/web/index.html
           test -f build/web/aliya.apk
           test -f build/web/aliya.tar.gz
+          tar -tzf build/web/aliya.tar.gz | grep -q "assets/main.py"
           touch build/web/.nojekyll
 
       - name: Configure GitHub Pages
