@@ -29,7 +29,10 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import re
+
           s = Path("Aliya.py").read_text(encoding="utf-8")
+
+          # Remove desktop-only imports/APIs.
           for line in (
               "import pyperclip\n",
               "import tkinter as tk\n",
@@ -38,6 +41,7 @@ jobs:
               "import webbrowser\n",
           ):
               s = s.replace(line, "", 1)
+
           s = re.sub(
               r"(?m)^hwnd = pygame\.display\.get_wm_info\(\)\['window'\]\n"
               r"^windll\.user32\.MoveWindow\(hwnd, 175, 100, WIDTH, HEIGHT, False\)\n?",
@@ -45,27 +49,43 @@ jobs:
               s,
               count=1,
           )
+
           s = re.sub(
               r"(?ms)^def hack_game\(\):\n.*?(?=^def shop_come\(\):)",
               "def hack_game():\n    global game_status\n    game_status = \"starting_menu\"\n\n\n",
               s,
               count=1,
           )
+
           s = s.replace('pyperclip.copy("+989044089850")', "pass")
           s = s.replace('pyperclip.copy("ali.talabi.25@gmail.com")', "pass")
           s = re.sub(r"webbrowser\.open\((url_telegram|url_instagram|url_rubika|url_eitaa)\)", "pass", s)
 
-          # Browser builds cannot use normal desktop file writes.
-          # Remove only the exact two-line write blocks; preserve surrounding game logic.
-          s = re.sub(
-              r"(?m)^([ \\t]*)with open([^\\n]+, ['\\\"]w['\\\"]) as [A-Za-z_]\\w*:\\n"
-              r"\\1    (?:json\\.dump|[^\\n]*\\.write)([^\\n]*)\\n",
-              r"\\1# Browser persistence disabled; state remains in memory.\\n",
-              s,
-          )
+          # Browser builds cannot persist files with normal open(..., "w").
+          # Remove exact write blocks without relying on fragile escaped regexes.
+          lines = s.splitlines(keepends=True)
+          out = []
+          i = 0
+          removed_writes = 0
+          while i < len(lines):
+              line = lines[i]
+              m = re.match(r"^(\s*)with open\((.*?),\s*['\"]w['\"]\) as [A-Za-z_]\w*:\s*$", line.rstrip("\n"))
+              if m and i + 1 < len(lines):
+                  next_line = lines[i + 1]
+                  if re.match(r"^" + re.escape(m.group(1)) + r"    (json\.dump|.*\.write\()", next_line):
+                      out.append(m.group(1) + "# Browser persistence disabled; state remains in memory.\n")
+                      i += 2
+                      removed_writes += 1
+                      continue
+              out.append(line)
+              i += 1
+          s = "".join(out)
+          print("REMOVED_WRITE_BLOCKS=", removed_writes)
 
           s = s.replace("mod.screen.", "screen.")
+
           Path("Aliya_web.py").write_text(s, encoding="utf-8")
+
           main = s.replace("import pgzrun\n", "", 1)
           main = main.replace("\npgzrun.go()\n", "\n", 1)
           if not main.startswith("#!pgzrun\n"):
@@ -73,9 +93,10 @@ jobs:
           Path("main.py").write_text(main, encoding="utf-8")
           PY
           python -m py_compile main.py
+
       - name: Validate browser source
         run: |
-          if grep -nE "open\\([^\\n]*['\\\"]w['\\\"]\\)" main.py; then
+          if grep -nE 'open\([^\n]*["'\''"]w["'\''"]\)' main.py; then
             echo "ERROR: browser-incompatible file write remains"
             exit 1
           fi
@@ -99,7 +120,6 @@ jobs:
           trap "kill $SERVER_PID || true" EXIT
           cat > /tmp/test_aliya.py <<'PY'
           import asyncio
-          from pathlib import Path
           from playwright.async_api import async_playwright
 
           async def main():
@@ -128,10 +148,12 @@ jobs:
           asyncio.run(main())
           PY
           python /tmp/test_aliya.py
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
           path: build/web
+
   deploy:
     needs: build
     runs-on: ubuntu-latest
