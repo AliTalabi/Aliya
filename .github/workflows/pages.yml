@@ -103,8 +103,10 @@ jobs:
       - name: Prepare GitHub Pages artifact
         run: |
           test -f build/web/index.html
-          test -f build/web/Aliya_web.apk
           touch build/web/.nojekyll
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
