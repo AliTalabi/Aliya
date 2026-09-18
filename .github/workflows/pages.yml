@@ -95,7 +95,10 @@ jobs:
         run: |
           rm -rf build/web
           cp Aliya_web.py main.py
+          rm -rf build/web
           python -m pygbag --build main.py
+          echo "=== Pygbag archive contents ==="
+          tar -tzf build/web/aliya.tar.gz | sed -n "1,120p"
 
       - name: Remove Pygbag user-interaction startup gate
         run: |
