@@ -115,6 +115,14 @@ jobs:
         run: |
           rm -rf build
           python -m pygbag --build --ume_block 0 main.py
+          # Pygbag can wait for a user action; enable automatic startup for GitHub Pages.
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("build/web/index.html")
+          s = p.read_text(encoding="utf-8")
+          s = s.replace("autorun : 0", "autorun : 1", 1)
+          p.write_text(s, encoding="utf-8")
+          PY
           test -f build/web/index.html
           test -f build/web/aliya.apk
           test -f build/web/aliya.tar.gz
@@ -140,7 +148,7 @@ jobs:
                   page.on("pageerror", lambda e: errors.append("PAGEERROR: " + str(e)))
                   page.on("console", lambda m: console.append(f"{m.type}: {m.text}"))
                   await page.goto("http://127.0.0.1:8000/", wait_until="load", timeout=30000)
-                  await page.wait_for_timeout(60000)
+                  await page.wait_for_timeout(90000)
                   await page.screenshot(path="/tmp/aliya.png", full_page=True)
                   canvas = await page.locator("canvas").count()
                   body = await page.locator("body").inner_text()
