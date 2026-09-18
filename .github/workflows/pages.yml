@@ -100,6 +100,30 @@ jobs:
           rm -rf build/web
           python -m pygbag --build Aliya_web.py
 
+      - name: Patch Pygbag start-screen input
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("build/web/index.html")
+          html = path.read_text(encoding="utf-8")
+
+          old = """        while not platform.window.MM.UME:
+                await asyncio.sleep(.1)
+"""
+          new = """        platform.window.canvas.style.pointerEvents = "none"
+            while not platform.window.MM.UME:
+                await asyncio.sleep(.1)
+            platform.window.canvas.style.pointerEvents = "auto"
+"""
+          if old not in html:
+              raise SystemExit("Could not find Pygbag media-engagement loop to patch.")
+
+          html = html.replace(old, new, 1)
+          path.write_text(html, encoding="utf-8")
+          print("Patched Pygbag start-screen input handling.")
+          PY
+
       - name: Prepare GitHub Pages artifact
         run: |
           test -f build/web/index.html
