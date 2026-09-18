@@ -36,52 +36,60 @@ jobs:
 
           source = Path("Aliya.py").read_text(encoding="utf-8")
 
-          # Remove desktop-only imports. The game itself does not need them
-          # for normal gameplay in the browser.
-          source = source.replace("import pyperclip\n", "pyperclip = None\n", 1)
-          source = source.replace("import tkinter as tk\n", "", 1)
-          source = source.replace("from tkinter import messagebox\n", "", 1)
-          source = source.replace("from ctypes import windll\n", "", 1)
+          # Remove desktop-only imports completely.
+          for line in (
+              "import pyperclip\n",
+              "import tkinter as tk\n",
+              "from tkinter import messagebox\n",
+              "from ctypes import windll\n",
+          ):
+              source = source.replace(line, "", 1)
 
-          # Remove Windows-only window positioning.
-          source = source.replace(
-              "hwnd = pygame.display.get_wm_info()['window']\n"
-              "windll.user32.MoveWindow(hwnd, 175, 100, WIDTH, HEIGHT, False)\n",
-              "",
-              1,
-          )
-
-          # The original hacking screen creates a Tk window, which cannot
-          # exist in a browser. Keep the game state valid and return to menu.
+          # Remove the Windows-only window positioning block.
           source = re.sub(
-              r"def hack_game\(\):\n.*?(?=\n\ndef draw\(\):)",
-              'def hack_game():\n    global game_status\n    game_status = "starting_menu"\n',
+              r"(?m)^hwnd = pygame\.display\.get_wm_info\(\)\['window'\]\n"
+              r"^windll\.user32\.MoveWindow\(hwnd, 175, 100, WIDTH, HEIGHT, False\)\n?",
+              "",
               source,
               count=1,
-              flags=re.S,
           )
 
-          # Clipboard operations are optional in the browser.
+          # Replace the Tkinter-only hacking screen with a browser-safe no-op.
+          source = re.sub(
+              r"(?ms)^def hack_game\(\):\n.*?(?=^def shop_come\(\):)",
+              "def hack_game():\n    global game_status\n    game_status = \"starting_menu\"\n\n\n",
+              source,
+              count=1,
+          )
+
+          # Clipboard is a desktop feature; keep the buttons functional
+          # without making the game depend on a clipboard package.
           source = source.replace(
-              '        pyperclip.copy("+989044089850")',
-              '        if pyperclip is not None:\n            pyperclip.copy("+989044089850")',
+              'pyperclip.copy("+989044089850")',
+              'pass',
           )
           source = source.replace(
-              '        pyperclip.copy("ali.talabi.25@gmail.com")',
-              '        if pyperclip is not None:\n            pyperclip.copy("ali.talabi.25@gmail.com")',
+              'pyperclip.copy("ali.talabi.25@gmail.com")',
+              'pass',
           )
+
+          # Opening external applications/tabs is not required for gameplay.
+          # Replace these calls with harmless no-ops in the web build.
+          source = re.sub(
+              r"webbrowser\.open\((url_telegram|url_instagram|url_rubika|url_eitaa)\)",
+              "pass",
+              source,
+          )
+          source = source.replace("import webbrowser\n", "")
 
           Path("Aliya_web.py").write_text(source, encoding="utf-8")
           PY
 
           python -m py_compile Aliya_web.py
 
-          # Fail early if desktop-only dependencies or the Windows API call
-          # accidentally survived the transformation.
-          if grep -nE '(^|[[:space:]])(import tkinter|from tkinter|from ctypes import windll|windll\.user32\.MoveWindow)' Aliya_web.py; then
-            echo "Desktop-only code survived web preparation."
-            exit 1
-          fi
+          echo "=== web source checks ==="
+          ! grep -nE '(^|[[:space:]])(import tkinter|from tkinter|from ctypes import windll|windll\.user32\.MoveWindow|pyperclip\.copy|webbrowser\.open)' Aliya_web.py
+          grep -nE '^(def hack_game|def shop_come|pgzrun\.go)' Aliya_web.py
 
       - name: Build Pygame Zero game for the web
         run: |
