@@ -23,7 +23,10 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # Pygbag supports pygame-ce, not the legacy pygame package.\n          # pgzero currently declares legacy pygame, so install it without deps.\n          python -m pip install pygame-ce pygbag\n          python -m pip install --no-deps pgzero
+          # Pygbag supports pygame-ce, not the legacy pygame package.
+          # pgzero currently declares legacy pygame, so install it without deps.
+          python -m pip install pygame-ce pygbag
+          python -m pip install --no-deps pgzero
       - name: Prepare browser entrypoint
         run: |
           python - <<'PY'
@@ -92,7 +95,13 @@ jobs:
               main = "#!pgzrun\n" + main
           Path("main.py").write_text(main, encoding="utf-8")
           PY
-          python -m py_compile main.py\n          python - <<'PY'\n          import pygame, pgzero\n          print("PYGAME_VERSION=", pygame.version.ver)\n          print("PGZERO_VERSION=", getattr(pgzero, "__version__", "unknown"))\n          print("PYGAME_FILE=", pygame.__file__)\n          PY
+          python -m py_compile main.py
+          python - <<'PY'
+          import pygame, pgzero
+          print("PYGAME_VERSION=", pygame.version.ver)
+          print("PGZERO_VERSION=", getattr(pgzero, "__version__", "unknown"))
+          print("PYGAME_FILE=", pygame.__file__)
+          PY
 
       - name: Validate browser source
         run: |
