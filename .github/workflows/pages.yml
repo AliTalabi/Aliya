@@ -32,20 +32,89 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+
           source = Path("Aliya.py").read_text(encoding="utf-8")
-          source = source.replace("import pyperclip\\n", "try:\\n    import pyperclip\\nexcept ImportError:\\n    pyperclip = None\\n")
-          source = source.replace("import tkinter as tk\\n", "try:\\n    import tkinter as tk\\n    from tkinter import messagebox\\nexcept ImportError:\\n    tk = None\\n    messagebox = None\\n")
-          source = source.replace("from ctypes import windll\\n", "try:\\n    from ctypes import windll\\nexcept ImportError:\\n    windll = None\\n")
-          source = source.replace("from tkinter import messagebox\\n\\nWIDTH = 1000", "WIDTH = 1000")
-          source = source.replace("hwnd = pygame.display.get_wm_info()['window']\\nwindll.user32.MoveWindow(hwnd, 175, 100, WIDTH, HEIGHT, False)", "if windll is not None:\\n    hwnd = pygame.display.get_wm_info()['window']\\n    windll.user32.MoveWindow(hwnd, 175, 100, WIDTH, HEIGHT, False)")
-          source = source.replace("def hack_game():\\n    global game_status, money\\n\\n    def on_enter():", "def hack_game():\\n    global game_status, money\\n\\n    if tk is None or messagebox is None:\\n        game_status = \"starting_menu\"\\n        return\\n\\n    def on_enter():")
-          source = source.replace('        pyperclip.copy("+989044089850")', '        if pyperclip is not None:\\n            pyperclip.copy("+989044089850")')
-          source = source.replace('        pyperclip.copy("ali.talabi.25@gmail.com")', '        if pyperclip is not None:\\n            pyperclip.copy("ali.talabi.25@gmail.com")')
+
+          # Browser-safe optional imports.
+          source = source.replace(
+              "import pyperclip\n",
+              "try:\n    import pyperclip\nexcept ImportError:\n    pyperclip = None\n",
+              1,
+          )
+          source = source.replace(
+              "import tkinter as tk\n",
+              "try:\n    import tkinter as tk\n    from tkinter import messagebox\nexcept ImportError:\n    tk = None\n    messagebox = None\n",
+              1,
+          )
+          source = source.replace(
+              "from ctypes import windll\n",
+              "try:\n    from ctypes import windll\nexcept (ImportError, AttributeError):\n    windll = None\n",
+              1,
+          )
+          source = source.replace("from tkinter import messagebox\n", "", 1)
+
+          # Windows-only window positioning must never run in a browser.
+          source = source.replace(
+              "hwnd = pygame.display.get_wm_info()['window']\n"
+              "windll.user32.MoveWindow(hwnd, 175, 100, WIDTH, HEIGHT, False)",
+              "if windll is not None:\n"
+              "    hwnd = pygame.display.get_wm_info()['window']\n"
+              "    windll.user32.MoveWindow(hwnd, 175, 100, WIDTH, HEIGHT, False)",
+              1,
+          )
+
+          # Replace the Tk desktop hack dialog with a harmless browser fallback.
+          old_hack = '''def hack_game():
+              global game_status, money
+
+              def on_enter():'''
+          new_hack = '''def hack_game():
+              global game_status, money
+
+              if tk is None or messagebox is None:
+                  game_status = "starting_menu"
+                  return
+
+              def on_enter():'''
+          source = source.replace(old_hack, new_hack, 1)
+
+          # Clipboard is not guaranteed in WebAssembly.
+          source = source.replace(
+              '        pyperclip.copy("+989044089850")',
+              '        if pyperclip is not None:\n            pyperclip.copy("+989044089850")',
+          )
+          source = source.replace(
+              '        pyperclip.copy("ali.talabi.25@gmail.com")',
+              '        if pyperclip is not None:\n            pyperclip.copy("ali.talabi.25@gmail.com")',
+          )
+
+          # Browser builds should not depend on desktop-only webbrowser behavior.
+          source = source.replace(
+              "        webbrowser.open(url_telegram)",
+              "        if webbrowser is not None:\n            webbrowser.open(url_telegram)",
+          )
+          source = source.replace(
+              "        webbrowser.open(url_instagram)",
+              "        if webbrowser is not None:\n            webbrowser.open(url_instagram)",
+          )
+          source = source.replace(
+              "        webbrowser.open(url_rubika)",
+              "        if webbrowser is not None:\n            webbrowser.open(url_rubika)",
+          )
+          source = source.replace(
+              "        webbrowser.open(url_eitaa)",
+              "        if webbrowser is not None:\n            webbrowser.open(url_eitaa)",
+          )
+
           Path("Aliya_web.py").write_text(source, encoding="utf-8")
           PY
 
-      - name: Build Pygame Zero game for the web
-        run: |
+          python -m py_compile Aliya_web.py
+
+          # Verify that no known desktop-only statements survived the transformation.
+          ! grep -nE '^from ctypes import windll$|^import tkinter as tk$|^from tkinter import messagebox$' Aliya_web.py
+
+      - name: Build Pygame Zero game for the web        run: |
           rm -rf build/web
           python -m pygbag --build Aliya_web.py
 
