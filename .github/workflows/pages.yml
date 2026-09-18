@@ -30,6 +30,7 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import re
+          import textwrap
 
           s = Path("Aliya.py").read_text(encoding="utf-8")
 
@@ -359,10 +360,10 @@ jobs:
                       if callback:
                           callback(event.pos)
           '''
-          compat = "\n".join(
-              line[10:] if line.startswith("          ") else line
-              for line in compat.strip("\n").splitlines()
-          ) + "\n"
+          # Remove the YAML/heredoc indentation without guessing a fixed
+          # number of spaces. The previous 10-space slicing caused an
+          # IndentationError in the generated main.py.
+          compat = textwrap.dedent(compat).strip("\n") + "\n"
 
           if marker not in s:
               raise SystemExit("Could not find TITLE marker")
