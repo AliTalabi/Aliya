@@ -56,7 +56,7 @@ jobs:
           s = re.sub(r"webbrowser\.open\((url_telegram|url_instagram|url_rubika|url_eitaa)\)", "pass", s)
 
           # Browser builds cannot use normal desktop file writes.
-          # Remove only the two-line write blocks; preserve all surrounding game logic.
+          # Remove only the exact two-line write blocks; preserve surrounding game logic.
           s = re.sub(
               r"(?m)^([ \\t]*)with open([^\\n]+, ['\\\"]w['\\\"]) as [A-Za-z_]\\w*:\\n"
               r"\\1    (?:json\\.dump|[^\\n]*\\.write)([^\\n]*)\\n",
@@ -73,6 +73,14 @@ jobs:
           Path("main.py").write_text(main, encoding="utf-8")
           PY
           python -m py_compile main.py
+      - name: Validate browser source
+        run: |
+          if grep -nE "open\\([^\\n]*['\\\"]w['\\\"]\\)" main.py; then
+            echo "ERROR: browser-incompatible file write remains"
+            exit 1
+          fi
+          grep -n "^#!pgzrun" main.py
+
       - name: Build web game
         run: |
           rm -rf build
@@ -81,6 +89,45 @@ jobs:
           test -f build/web/aliya.apk
           test -f build/web/aliya.tar.gz
           tar -tzf build/web/aliya.tar.gz | grep -q "assets/main.py"
+
+      - name: Browser smoke test
+        run: |
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
+          python -m http.server 8000 --directory build/web >/tmp/aliya-http.log 2>&1 &
+          SERVER_PID=$!
+          trap "kill $SERVER_PID || true" EXIT
+          cat > /tmp/test_aliya.py <<'PY'
+          import asyncio
+          from pathlib import Path
+          from playwright.async_api import async_playwright
+
+          async def main():
+              errors = []
+              console = []
+              async with async_playwright() as p:
+                  browser = await p.chromium.launch()
+                  page = await browser.new_page(viewport={"width": 1200, "height": 800})
+                  page.on("pageerror", lambda e: errors.append("PAGEERROR: " + str(e)))
+                  page.on("console", lambda m: console.append(f"{m.type}: {m.text}"))
+                  await page.goto("http://127.0.0.1:8000/", wait_until="load", timeout=30000)
+                  await page.wait_for_timeout(60000)
+                  await page.screenshot(path="/tmp/aliya.png", full_page=True)
+                  canvas = await page.locator("canvas").count()
+                  body = await page.locator("body").inner_text()
+                  print("CANVAS_COUNT=", canvas)
+                  print("BODY_TEXT=", body[:1000])
+                  print("PAGE_ERRORS=", errors[-20:])
+                  print("CONSOLE=", console[-50:])
+                  if errors:
+                      raise RuntimeError("\n".join(errors[-20:]))
+                  if canvas == 0:
+                      raise RuntimeError("No canvas was created by the game.")
+                  await browser.close()
+
+          asyncio.run(main())
+          PY
+          python /tmp/test_aliya.py
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
