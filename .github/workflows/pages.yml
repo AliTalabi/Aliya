@@ -96,6 +96,30 @@ jobs:
           Path("main.py").write_text(main, encoding="utf-8")
           PY
           python -m py_compile main.py
+
+          # Vendor Pygame Zero into the game bundle so Pygbag does not try to
+          # install its desktop-only dependency chain (notably numpy/pyfxr).
+          python - <<'PY'
+          from pathlib import Path
+          import shutil
+          import pgzero
+          import pgzrun
+
+          src = Path(pgzero.__file__).parent
+          dst = Path("pgzero")
+          shutil.copytree(src, dst, dirs_exist_ok=True)
+          shutil.copy2(Path(pgzrun.__file__), "pgzrun.py")
+
+          # Aliya does not use Pygame Zero's tone API. Removing the eager tone
+          # import avoids pulling pyfxr into the browser runtime.
+          builtins = dst / "builtins.py"
+          s = builtins.read_text(encoding="utf-8")
+          s = s.replace("from . import tone\n", "")
+          s = s.replace("tone, ", "")
+          s = s.replace(", tone", "")
+          builtins.write_text(s, encoding="utf-8")
+          print("VENDORED_PGZERO=", src)
+          PY
           python - <<'PY'
           import pygame, pgzero
           print("PYGAME_VERSION=", pygame.version.ver)
