@@ -54,6 +54,32 @@ jobs:
           s = s.replace('pyperclip.copy("+989044089850")', "pass")
           s = s.replace('pyperclip.copy("ali.talabi.25@gmail.com")', "pass")
           s = re.sub(r"webbrowser\.open\((url_telegram|url_instagram|url_rubika|url_eitaa)\)", "pass", s)
+
+          # The desktop version writes JSON/text files. Browser/WASM file
+          # writes are not persistent and can abort update() before draw().
+          # Remove every desktop write block; browser state remains in memory.
+          lines = s.splitlines(True)
+          out = []
+          i = 0
+          write_re = re.compile(r"^(\\s*)with open\\([^\\n]+, ['\\\"]w['\\\"]\\)")
+          while i < len(lines):
+              m = write_re.match(lines[i])
+              if not m:
+                  out.append(lines[i])
+                  i += 1
+                  continue
+              indent = m.group(1)
+              out.append(indent + "# Browser persistence disabled; keep this state in memory.\\n")
+              i += 1
+              while i < len(lines):
+                  stripped = lines[i].strip()
+                  current_indent = len(lines[i]) - len(lines[i].lstrip())
+                  if stripped and current_indent <= len(indent):
+                      break
+                  i += 1
+          s = "".join(out)
+
+          s = s.replace("mod.screen.", "screen.")
           Path("Aliya_web.py").write_text(s, encoding="utf-8")
           main = s.replace("import pgzrun\n", "", 1)
           main = main.replace("\npgzrun.go()\n", "\n", 1)
