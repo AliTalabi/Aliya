@@ -114,7 +114,8 @@ jobs:
           # Verify that no known desktop-only statements survived the transformation.
           ! grep -nE '^from ctypes import windll$|^import tkinter as tk$|^from tkinter import messagebox$' Aliya_web.py
 
-      - name: Build Pygame Zero game for the web        run: |
+      - name: Build Pygame Zero game for the web
+        run: |
           rm -rf build/web
           python -m pygbag --build Aliya_web.py
 
