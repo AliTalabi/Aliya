@@ -100,34 +100,54 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+
           p = Path("build/web/index.html")
           s = p.read_text(encoding="utf-8")
 
-          # Pygbag 0.9.x can deliberately pause here waiting for a browser
-          # user-media gesture. GitHub Pages is already serving the page,
-          # so remove that startup gate and let the game boot automatically.
-          s = s.replace('ume_block : 1', 'ume_block : 0')
-          s = s.replace('autorun : 0', 'autorun : 1')
+          # Disable Pygbag's startup user-media gate and enable automatic boot.
+          s = s.replace("ume_block : 1", "ume_block : 0")
+          s = s.replace("autorun : 0", "autorun : 1")
 
-          # Make the game canvas explicitly interactive above the loader UI.
-          s = s.replace(
-              'canvas.emscripten {\\n            border:',
-              'canvas.emscripten {\\n            pointer-events: auto;\\n            touch-action: none;\\n            border:',
-              1,
-          )
+          # Make the SDL canvas receive mouse, touch, and pointer input.
+          if "pointer-events: auto;" not in s:
+              s = s.replace(
+                  "canvas.emscripten {",
+                  "canvas.emscripten {\n            pointer-events: auto;\n            touch-action: none;",
+                  1,
+              )
 
-          # Keep the canvas focused so keyboard/game events reach SDL/Pygame.
-          s = s.replace(
-              '</body>\\n</html>',
-              '''<script>\\n(function () {\\n  function focusGameCanvas() {\\n    const c = document.getElementById("canvas");\\n    if (!c) return;\\n    c.style.pointerEvents = "auto";\\n    c.setAttribute("tabindex", "1");\\n    try { c.focus({preventScroll: true}); } catch (_) { try { c.focus(); } catch (_) {} }\\n  }\\n  window.addEventListener("pointerdown", focusGameCanvas, {once: false, passive: true});\\n  window.addEventListener("touchstart", focusGameCanvas, {once: false, passive: true});\\n  window.addEventListener("keydown", focusGameCanvas, {once: false, passive: true});\\n  window.addEventListener("load", focusGameCanvas);\\n  setTimeout(focusGameCanvas, 250);\\n  setTimeout(focusGameCanvas, 1500);\\n})();\\n</script>\\n</body>\\n</html>''',
-              1,
-          )
+          # Focus the canvas after the page loads and whenever the user interacts.
+          if "Aliya canvas focus bridge" not in s:
+              bridge = """
+          <!-- Aliya canvas focus bridge -->
+          <script>
+          (function () {
+            function focusGameCanvas() {
+              var c = document.getElementById("canvas");
+              if (!c) return;
+              c.style.pointerEvents = "auto";
+              c.setAttribute("tabindex", "1");
+              try { c.focus({preventScroll: true}); } catch (e) { try { c.focus(); } catch (_) {} }
+            }
+            window.addEventListener("load", focusGameCanvas);
+            window.addEventListener("pointerdown", focusGameCanvas, true);
+            window.addEventListener("touchstart", focusGameCanvas, true);
+            window.addEventListener("keydown", focusGameCanvas, true);
+            setTimeout(focusGameCanvas, 250);
+            setTimeout(focusGameCanvas, 1500);
+          })();
+          </script>
+          """
+              s = s.replace("</body>", bridge + "</body>", 1)
+
+          # Fail loudly if the expected Pygbag template/config was not produced.
+          assert "ume_block : 0" in s, "Pygbag ume_block setting was not found"
+          assert "autorun : 1" in s, "Pygbag autorun setting was not found"
+          assert "pointer-events: auto;" in s, "Canvas CSS patch was not applied"
+          assert "Aliya canvas focus bridge" in s, "Canvas focus bridge was not injected"
 
           p.write_text(s, encoding="utf-8")
-          assert 'ume_block : 0' in s
-          assert 'autorun : 1' in s
-          assert 'pointer-events: auto;' in s
-          print("Pygbag startup gate removed; canvas interaction enabled.")
+          print("Pygbag startup gate disabled and canvas input bridge installed.")
           PY
 
       - name: Prepare GitHub Pages artifact
